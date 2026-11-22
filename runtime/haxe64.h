@@ -25,9 +25,95 @@ static inline int16_t h64_random(int16_t n) {
 	return (int16_t)(h64_rand16() % (uint16_t)n);
 }
 
+/* ---------- Float = 12.4 fixed point (int16_t, -2048..2047, 1/16 steps) ---------- */
+static inline int16_t h64_fmul(int16_t a, int16_t b) { return (int16_t)(((int32_t)a * b) >> 4); }
+static inline int16_t h64_fdiv(int16_t a, int16_t b) { return b ? (int16_t)(((int32_t)a << 4) / b) : 0; }
+static inline int16_t h64_idiv_fix(int16_t a, int16_t b) { return b ? (int16_t)(((int32_t)a << 4) / b) : 0; }
+static inline int16_t h64_ftoi(int16_t f) { return f < 0 ? -((-f) >> 4) : (f >> 4); }
+static inline int16_t h64_fabs(int16_t f) { return f < 0 ? -f : f; }
+static inline int16_t h64_fmin(int16_t a, int16_t b) { return a < b ? a : b; }
+static inline int16_t h64_fmax(int16_t a, int16_t b) { return a > b ? a : b; }
+static inline int16_t h64_ffloor(int16_t f) { return f >> 4; }
+static inline int16_t h64_fceil(int16_t f) { return (f + 15) >> 4; }
+static inline int16_t h64_fround(int16_t f) { return (f + 8) >> 4; }
+static int16_t h64_fsqrt(int16_t f) {
+	/* sqrt(f/16)*16 = sqrt(f*16) */
+	uint32_t v, r = 0, bit = 1UL << 20;
+	if (f <= 0) return 0;
+	v = (uint32_t)f << 4;
+	while (bit > v) bit >>= 2;
+	while (bit) {
+		if (v >= r + bit) { v -= r + bit; r = (r >> 1) + bit; } else r >>= 1;
+		bit >>= 2;
+	}
+	return (int16_t)r;
+}
+/* quarter sine wave, 16 steps, scaled by 16 */
+static const uint8_t h64_sin_q[17] = {0, 2, 3, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 15, 16, 16, 16};
+static int16_t h64_fsin(int16_t f) {
+	/* f is radians * 16; one turn = 2*pi*16 = 100.5 -> map to 64 steps */
+	int16_t i = (int16_t)(((int32_t)f * 64) / 101);
+	uint8_t q;
+	i &= 63;
+	q = (uint8_t)i & 15;
+	switch (i >> 4) {
+		case 0: return h64_sin_q[q];
+		case 1: return h64_sin_q[16 - q];
+		case 2: return -h64_sin_q[q];
+		default: return -h64_sin_q[16 - q];
+	}
+}
+static int16_t h64_fcos(int16_t f) { return h64_fsin(f + 25); }
+
+/* ---------- temporary strings (concatenation): a ring of 8 buffers, max 39 characters each ---------- */
+static char h64_strbuf[8][40];
+static uint8_t h64_strnext = 0;
+static char *h64_tmpstr(void) {
+	char *b = h64_strbuf[h64_strnext];
+	h64_strnext = (h64_strnext + 1) & 7;
+	return b;
+}
+static const char *h64_itoa(int16_t v) {
+	char *b = h64_tmpstr();
+	char t[7];
+	uint8_t i = 0, j = 0;
+	uint16_t u = v < 0 ? (uint16_t)(-v) : (uint16_t)v;
+	do { t[i++] = '0' + (u % 10); u /= 10; } while (u);
+	if (v < 0) b[j++] = '-';
+	while (i) b[j++] = t[--i];
+	b[j] = 0;
+	return b;
+}
+static const char *h64_ftoa(int16_t f) {
+	char *b = h64_tmpstr();
+	uint16_t u = f < 0 ? (uint16_t)(-f) : (uint16_t)f;
+	uint16_t fr = ((u & 15) * 100 + 8) / 16;
+	const char *ip = h64_itoa((int16_t)(u >> 4));
+	uint8_t j = 0;
+	if (f < 0) b[j++] = '-';
+	while (*ip && j < 32) b[j++] = *ip++;
+	b[j++] = '.';
+	b[j++] = '0' + fr / 10;
+	b[j++] = '0' + fr % 10;
+	b[j] = 0;
+	return b;
+}
+static const char *h64_cat(const char *a, const char *b) {
+	char *r = h64_tmpstr();
+	uint8_t j = 0;
+	while (*a && j < 39) r[j++] = *a++;
+	while (*b && j < 39) r[j++] = *b++;
+	r[j] = 0;
+	return r;
+}
+
 /* ---------- trace / panic ---------- */
 static void h64_trace_int(int16_t v) { printf("%d\n", v); }
 static void h64_trace_str(const char *s) { printf("%s\n", s); }
+static void h64_trace_fix(int16_t f) {
+	uint16_t u = f < 0 ? (uint16_t)(-f) : (uint16_t)f;
+	printf("%s%u.%02u\n", f < 0 ? "-" : "", u >> 4, ((u & 15) * 100 + 8) / 16);
+}
 static void h64_trace_bool(bool b) { printf(b ? "true\n" : "false\n"); }
 
 static void h64_panic(const char *msg) {

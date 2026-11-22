@@ -1,0 +1,27 @@
+basic update
+BASIC
+OBJ
+PLAYER
+OBJ
+21.75
+2
+true
+false
+true
+5
+8.50
+8
+3.50
+-2
+2.25
+4.00
+true
+false
+false
+true
+12
+6
+7
+SCORE: 120 X2.50
+HP -3
+15

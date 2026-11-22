@@ -18,6 +18,7 @@ while [[ $# -gt 0 ]]; do
     -main) MAIN="$2"; shift 2;;
     -cp) CPS+=(-cp "$2"); shift 2;;
     -D) DEFS+=(-D "$2"); shift 2;;
+    -lib|--library) DEFS+=(-lib "$2"); shift 2;;
     -o) OUT="$2"; shift 2;;
     --sim) SIM=1; shift;;
     --run) RUN=1; shift;;
@@ -32,16 +33,19 @@ done
 mkdir -p "$(dirname "$OUT")"
 CFILE="${OUT%.*}.c"
 
+# PNG reading for flixel.system.FlxAssets
+if haxelib path format >/dev/null 2>&1; then DEFS+=(-lib format); fi
+
 haxe -cp "$ROOT/std" -cp "$ROOT/src" "${CPS[@]}" "${DEFS[@]+"${DEFS[@]}"}" -main "$MAIN" \
   --no-output -dce full -D haxe64 --macro "haxe64.Generator.use()" -D "haxe64-out=$CFILE"
 
 if [[ $SIM -eq 1 ]]; then
-  "$LLVM_MOS/bin/mos-sim-clang" -Os -fwrapv -Wno-parentheses-equality -Wno-constant-conversion -I "$ROOT/runtime" -o "$OUT" "$CFILE"
+  "$LLVM_MOS/bin/mos-sim-clang" -Os -fwrapv -Wno-parentheses-equality -Wno-constant-conversion -Wno-incompatible-pointer-types -Wno-incompatible-function-pointer-types -I "$ROOT/runtime" -o "$OUT" "$CFILE"
   "$LLVM_MOS/bin/mos-sim" "$OUT"
   exit $?
 fi
 
-"$LLVM_MOS/bin/mos-c64-clang" -Os -fwrapv -Wno-parentheses-equality -Wno-constant-conversion -I "$ROOT/runtime" -o "$OUT" "$CFILE"
+"$LLVM_MOS/bin/mos-c64-clang" -Os -fwrapv -Wno-parentheses-equality -Wno-constant-conversion -Wno-incompatible-pointer-types -Wno-incompatible-function-pointer-types -I "$ROOT/runtime" -o "$OUT" "$CFILE"
 echo "haxe64: $OUT ($(wc -c < "$OUT" | tr -d ' ') bytes)"
 [[ $RUN -eq 1 ]] && exec "$VICE" -autostart "$OUT"
 exit 0
