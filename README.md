@@ -57,6 +57,8 @@ if (Joy.fire()) Sid.noteOn(0, Sid.NOISE);
 Vic.waitFrame();                      // once per game loop
 ```
 
+Sprite shapes from ASCII art at compile time: `haxe64.SpriteArt.make(["..##..", ...])` (a macro).
+
 Packages: `c64.Mem`, `Vic`, `Sprite`, `Screen`, `Joy`, `Sid`, `Keyboard`, `Color`.
 
 Escape hatches:
@@ -69,6 +71,8 @@ Escape hatches:
 ## Examples
 
 - `examples/hello` - text + frame counter
+- `examples/starguard` - shoot'em up: 6 pooled aliens, bullet, explosions, levels, title/game-over states,
+  keyboard (A/D/SPACE) or joystick port 2. Build with `-D autoplay` to let it play itself (headless testing)
 - `examples/catcher` - a small game: joystick (port 2) moves a sprite, catch the falling stars, SID beeps, sprite collisions, object pool
 
 ## Roadmap

@@ -148,6 +148,14 @@ class Generator {
 		}
 	}
 
+	function isVoid(t:Type):Bool {
+		return switch Context.follow(t) {
+			case TAbstract(_.get() => {pack: [], name: "Void"}, _): true;
+			case TMono(_): true;
+			case _: false;
+		}
+	}
+
 	function isString(t:Type):Bool {
 		return switch Context.follow(t) {
 			case TInst(_.get() => {pack: [], name: "String"}, _): true;
@@ -707,7 +715,11 @@ class Generator {
 				var s = new StringBuf();
 				s.add("({\n");
 				indentLevel++;
-				for (x in el) s.add(genStmt(x));
+				var valued = !isVoid(e.t);
+				for (k in 0...el.length) {
+					if (valued && k == el.length - 1) s.add(ind() + genExpr(el[k]) + ";\n");
+					else s.add(genStmt(el[k]));
+				}
 				indentLevel--;
 				s.add(ind() + "})");
 				return s.toString();
