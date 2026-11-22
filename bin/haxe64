@@ -36,12 +36,12 @@ haxe -cp "$ROOT/std" -cp "$ROOT/src" "${CPS[@]}" "${DEFS[@]+"${DEFS[@]}"}" -main
   --no-output -dce full -D haxe64 --macro "haxe64.Generator.use()" -D "haxe64-out=$CFILE"
 
 if [[ $SIM -eq 1 ]]; then
-  "$LLVM_MOS/bin/mos-sim-clang" -Os -fwrapv -Wno-parentheses-equality -I "$ROOT/runtime" -o "$OUT" "$CFILE"
+  "$LLVM_MOS/bin/mos-sim-clang" -Os -fwrapv -Wno-parentheses-equality -Wno-constant-conversion -I "$ROOT/runtime" -o "$OUT" "$CFILE"
   "$LLVM_MOS/bin/mos-sim" "$OUT"
   exit $?
 fi
 
-"$LLVM_MOS/bin/mos-c64-clang" -Os -fwrapv -Wno-parentheses-equality -I "$ROOT/runtime" -o "$OUT" "$CFILE"
+"$LLVM_MOS/bin/mos-c64-clang" -Os -fwrapv -Wno-parentheses-equality -Wno-constant-conversion -I "$ROOT/runtime" -o "$OUT" "$CFILE"
 echo "haxe64: $OUT ($(wc -c < "$OUT" | tr -d ' ') bytes)"
 [[ $RUN -eq 1 ]] && exec "$VICE" -autostart "$OUT"
 exit 0

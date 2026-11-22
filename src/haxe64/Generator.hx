@@ -322,7 +322,7 @@ class Generator {
 					if (size != null && elems.length > size) err('array literal has ${elems.length} elements but @:size is $size', cf.pos);
 					var n = size != null ? size : elems.length;
 					var vals = elems.map(e -> genConstExpr(e));
-					bufGlobals.add('static ${isFinal ? "const " : ""}$elemT $name[$n]$attr = {' + vals.join(", ") + '};\n');
+					bufGlobals.add('static $elemT $name[$n]$attr = {' + vals.join(", ") + '};\n');
 				} else {
 					if (size == null) err("static array needs an initializer or @:size(N)", cf.pos);
 					bufGlobals.add('static $elemT $name[$size]$attr;\n');
@@ -532,8 +532,9 @@ class Generator {
 
 	function genBody(e:TypedExpr):String {
 		switch e.expr {
-			case TBlock(_):
-				return genStmt(e).ltrim();
+			case TBlock(el):
+				var st = genStmt(e).ltrim();
+				return st == "" ? "{}\n" : st;
 			case _:
 				indentLevel++;
 				var s = genStmt(e);

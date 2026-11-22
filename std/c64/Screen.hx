@@ -9,6 +9,11 @@ class Screen {
 	public static inline final RAM = 0x0400;
 	public static inline final COLOR_RAM = 0xD800;
 
+	/** Where the text screen is (if you moved the VIC screen, e.g. to $C000). Also used by put/get. **/
+	public static inline function setBase(addr:Int) {
+		untyped __c__("h64_screen = (volatile uint8_t*)(uint16_t)({0})", addr);
+	}
+
 	/** Fill the screen with spaces in the current text color. **/
 	public static inline function clear() {
 		untyped __c__("h64_screen_clear(32)");
@@ -31,11 +36,11 @@ class Screen {
 
 	/** Put a screen code with a color at a position. **/
 	public static inline function put(x:Int, y:Int, code:Int, color:Int) {
-		Mem.poke(RAM + y * 40 + x, code);
+		untyped __c__("h64_screen[{0}] = (uint8_t)({1})", y * 40 + x, code);
 		Mem.poke(COLOR_RAM + y * 40 + x, color);
 	}
 
 	public static inline function get(x:Int, y:Int):U8 {
-		return Mem.peek(RAM + y * 40 + x);
+		return untyped __c__("h64_screen[{0}]", y * 40 + x);
 	}
 }

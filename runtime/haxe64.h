@@ -41,6 +41,8 @@ static void h64_panic(const char *msg) {
 
 /* ---------- screen helpers ---------- */
 static uint8_t h64_text_color = 1;
+/* text screen base (VIC screen RAM as seen by the CPU) */
+static volatile uint8_t *h64_screen = (volatile uint8_t *)0x0400;
 
 static inline uint8_t h64_ascii_to_screen(uint8_t c) {
 	if (c >= 'a' && c <= 'z') return c - 'a' + 1;  /* upper-case glyphs */
@@ -51,7 +53,7 @@ static inline uint8_t h64_ascii_to_screen(uint8_t c) {
 
 static void h64_screen_print(int16_t x, int16_t y, const char *s) {
 	uint16_t off = (uint16_t)y * 40 + (uint16_t)x;
-	volatile uint8_t *scr = (volatile uint8_t *)0x0400 + off;
+	volatile uint8_t *scr = h64_screen + off;
 	volatile uint8_t *col = (volatile uint8_t *)0xD800 + off;
 	while (*s) {
 		*scr++ = h64_ascii_to_screen((uint8_t)*s++);
@@ -75,8 +77,36 @@ static void h64_screen_print_num(int16_t x, int16_t y, int16_t n, uint8_t width)
 }
 
 static void h64_screen_clear(uint8_t ch) {
-	memset((void *)0x0400, ch, 1000);
+	memset((void *)h64_screen, ch, 1000);
 	memset((void *)0xD800, h64_text_color, 1000);
+}
+
+/* copy into the RAM hidden under the I/O area ($D000-$DFFF) - all ROMs and I/O are banked out meanwhile */
+static void h64_copy_under_io(uint16_t dest, const void *src, uint16_t len) {
+	uint8_t old;
+	__asm__ volatile("sei");
+	old = H64_PEEK(0x01);
+	H64_POKE(0x01, (old & 0xF8) | 0x04);
+	memcpy((void *)dest, src, len);
+	H64_POKE(0x01, old);
+	__asm__ volatile("cli");
+}
+
+/* copy `len` bytes of the character ROM (offset from $D000) into RAM at `dest` */
+static void h64_copy_charrom(uint16_t dest, uint16_t offset, uint16_t len) {
+	uint8_t old;
+	uint16_t i;
+	__asm__ volatile("sei");
+	old = H64_PEEK(0x01);
+	H64_POKE(0x01, (old & 0xF8) | 0x03); /* char ROM visible at $D000, KERNAL stays */
+	for (i = 0; i < len; i++) {
+		uint8_t v = *(volatile uint8_t *)(0xD000 + offset + i);
+		H64_POKE(0x01, (old & 0xF8) | 0x04); /* all RAM */
+		*(volatile uint8_t *)(dest + i) = v;
+		H64_POKE(0x01, (old & 0xF8) | 0x03);
+	}
+	H64_POKE(0x01, old);
+	__asm__ volatile("cli");
 }
 
 static void h64_wait_frame(void) {
