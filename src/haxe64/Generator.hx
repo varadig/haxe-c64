@@ -656,7 +656,14 @@ class Generator {
 		var ret = isCtor ? '$cls*' : ctype(tf.t, cf.pos);
 		var attrs = cf.meta.has(":irq") ? "__attribute__((interrupt_norecurse)) " : "";
 		if (cf.meta.has(":noinline")) attrs += "__attribute__((noinline)) ";
-		var sig = 'static $attrs$ret $name(${params.length == 0 ? "void" : params.join(", ")})';
+		// Virtual method bodies: `name_impl` holds the code (direct and super calls use it, so the compiler may inline it there),
+		// `name` is a noinline wrapper used only by the dispatcher. The dispatcher is usually part of a recursive cycle
+		// (group.update -> member.update) and llvm-mos gives recursive functions a slow soft stack; keeping the bodies out of it
+		// lets them use fast static frames.
+		var virtualImpl = !isStatic && !isCtor && name != cls + "_init" && isVirtual(c, cf.name);
+		var bodyName = virtualImpl ? name + "_impl" : name;
+		var plist = params.length == 0 ? "void" : params.join(", ");
+		var sig = 'static $attrs$ret $bodyName($plist)';
 		bufProtos.add(sig + ";\n");
 		indentLevel = 1;
 		var body = new StringBuf();
@@ -667,6 +674,12 @@ class Generator {
 		if (isCtor) body.add("\treturn self;\n");
 		body.add("}\n\n");
 		bufFuncs.add(body.toString());
+		if (virtualImpl) {
+			var wsig = 'static __attribute__((noinline)) $ret $name($plist)';
+			var args = ["self"].concat([for (a in tf.args) localName(a.v)]);
+			bufProtos.add(wsig + ";\n");
+			bufFuncs.add('$wsig {\n\t${ret == "void" ? "" : "return "}$bodyName(${args.join(", ")});\n}\n\n');
+		}
 	}
 
 	// =====================================================================
@@ -1395,6 +1408,7 @@ class Generator {
 				var impl = findImpl(cc, fld.name);
 				if (impl == null) return err('method ${cc.name}.${fld.name} has no body', e.pos);
 				var name = useFunction(impl.c, impl.f, false, e.pos);
+				if (isVirtual(impl.c, fld.name)) name += "_impl";
 				return '$name((${className(impl.c)}*)$objS${argS.length > 0 ? ", " + argS.join(", ") : ""})';
 			case TField(_, FEnum(_, _)):
 				return err("enum constructors with arguments are not supported", e.pos);

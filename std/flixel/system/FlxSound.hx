@@ -24,6 +24,7 @@ class FlxSound {
 	static var LEN:Array<U8> = [4, 8, 8, 10, 24, 6, 24, 4, 6];
 	static var WAVE:Array<U8> = [64, 64, 16, 128, 128, 32, 32, 16, 16];
 
+	static var VOICE:Array<Int> = [0xD400, 0xD407, 0xD40E];
 	@:size(3) static var t:Array<U8>;
 	@:size(3) static var f:Array<Int>;
 	@:size(3) static var df:Array<Int>;
@@ -41,14 +42,16 @@ class FlxSound {
 	public static function play(sfx:Int) {
 		if (sfx < 0 || sfx > 8) return;
 		var v = nextVoice;
-		nextVoice = (nextVoice + 1) % 3;
+		nextVoice = nextVoice == 2 ? 0 : nextVoice + 1;
 		t[v] = LEN[sfx];
 		f[v] = FREQ[sfx];
 		df[v] = SLIDE[sfx];
 		w[v] = WAVE[sfx];
-		Sid.setFreq(v, f[v]);
-		Sid.noteOff(v, w[v]);
-		Sid.noteOn(v, w[v]);
+		var base = VOICE[v];
+		Mem.poke(base, f[v] & 255);
+		Mem.poke(base + 1, (f[v] >> 8) & 255);
+		Mem.poke(base + 4, w[v]);
+		Mem.poke(base + 4, w[v] | 1);
 	}
 
 	public static function update() {
@@ -57,8 +60,10 @@ class FlxSound {
 			t[v] = t[v] - 1;
 			f[v] = f[v] + df[v];
 			if (f[v] < 0x0100) f[v] = 0x0100;
-			Sid.setFreq(v, f[v]);
-			if (t[v] == 0) Sid.noteOff(v, w[v]);
+			var base = VOICE[v];
+			Mem.poke(base, f[v] & 255);
+			Mem.poke(base + 1, (f[v] >> 8) & 255);
+			if (t[v] == 0) Mem.poke(base + 4, w[v]);
 		}
 	}
 }

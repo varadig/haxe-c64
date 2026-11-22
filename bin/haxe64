@@ -1,51 +1,66 @@
 #!/usr/bin/env bash
 # haxe64 - compile a Haxe program to a Commodore 64 .prg
 #
-#   haxe64 [options] [-cp dir ...] -main Main [-o out.prg]
+#   haxe64 [options] [build.hxml ...] [-cp dir ...] [-main Main] [-o out.prg]
+#     file.hxml    Haxe arguments from a file (-cp, -main, -D ...), as for any Haxe target
+#     -o out.prg   output (default: build/<Main>.prg); the generated C goes next to it
 #     --sim        build for the llvm-mos 6502 simulator instead (for tests) and run it
 #     --run        start the .prg in VICE after building
-#     --keep-c     keep the generated C file next to the output
-#     -D name      pass a define to Haxe
+#     -D name      pass a define to Haxe;  -lib name: a haxelib
+#   Environment: LLVM_MOS (default ~/.local/opt/llvm-mos), VICE (default x64sc)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LLVM_MOS="${LLVM_MOS:-$HOME/.local/opt/llvm-mos}"
 VICE="${VICE:-x64sc}"
 
-MAIN=""; OUT=""; SIM=0; RUN=0; CPS=(); DEFS=()
+MAIN=""; OUT=""; SIM=0; RUN=0; ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -main) MAIN="$2"; shift 2;;
-    -cp) CPS+=(-cp "$2"); shift 2;;
-    -D) DEFS+=(-D "$2"); shift 2;;
-    -lib|--library) DEFS+=(-lib "$2"); shift 2;;
+    -main) MAIN="$2"; ARGS+=(-main "$2"); shift 2;;
+    -cp) ARGS+=(-cp "$2"); shift 2;;
+    -D) ARGS+=(-D "$2"); shift 2;;
+    -lib|--library) ARGS+=(-lib "$2"); shift 2;;
     -o) OUT="$2"; shift 2;;
     --sim) SIM=1; shift;;
     --run) RUN=1; shift;;
     --keep-c) shift;;
-    -h|--help) sed -n '2,9p' "$0"; exit 0;;
+    -h|--help) sed -n '2,10p' "$0"; exit 0;;
+    *.hxml)
+      [[ -f "$1" ]] || { echo "haxe64: $1 not found" >&2; exit 1; }
+      ARGS+=("$1")
+      m=$(grep -E '^\s*(-main|-m|--main)\s' "$1" | head -1 | awk '{print $2}' || true)
+      [[ -n "$m" && -z "$MAIN" ]] && MAIN="$m"
+      shift;;
     *) echo "haxe64: unknown argument $1" >&2; exit 1;;
   esac
 done
-[[ -z "$MAIN" ]] && { echo "haxe64: -main is required" >&2; exit 1; }
-[[ ${#CPS[@]} -eq 0 ]] && CPS=(-cp .)
+[[ -z "$MAIN" ]] && { echo "haxe64: no main class (-main Main or an .hxml with -main)" >&2; exit 1; }
 [[ -z "$OUT" ]] && OUT="build/${MAIN##*.}.prg"
 mkdir -p "$(dirname "$OUT")"
 CFILE="${OUT%.*}.c"
 
 # PNG reading for flixel.system.FlxAssets
-if haxelib path format >/dev/null 2>&1; then DEFS+=(-lib format); fi
+LIBS=()
+if haxelib path format >/dev/null 2>&1; then LIBS+=(-lib format); fi
 
-haxe -cp "$ROOT/std" -cp "$ROOT/src" "${CPS[@]}" "${DEFS[@]+"${DEFS[@]}"}" -main "$MAIN" \
+haxe -cp "$ROOT/std" -cp "$ROOT/src" "${LIBS[@]+"${LIBS[@]}"}" "${ARGS[@]}" \
   --no-output -dce full -D haxe64 --macro "haxe64.Generator.use()" -D "haxe64-out=$CFILE"
 
+CFLAGS=(-Os -fwrapv -Wno-parentheses-equality -Wno-constant-conversion -Wno-incompatible-pointer-types
+  -Wno-incompatible-function-pointer-types -I "$ROOT/runtime" ${H64_CFLAGS:-})
+
 if [[ $SIM -eq 1 ]]; then
-  "$LLVM_MOS/bin/mos-sim-clang" -Os -fwrapv -Wno-parentheses-equality -Wno-constant-conversion -Wno-incompatible-pointer-types -Wno-incompatible-function-pointer-types -I "$ROOT/runtime" -o "$OUT" "$CFILE"
-  "$LLVM_MOS/bin/mos-sim" "$OUT"
+  "$LLVM_MOS/bin/mos-sim-clang" "${CFLAGS[@]}" -o "$OUT" "$CFILE"
+  "$LLVM_MOS/bin/mos-sim" ${H64_SIM_FLAGS:-} "$OUT"
   exit $?
 fi
 
-"$LLVM_MOS/bin/mos-c64-clang" -Os -fwrapv -Wno-parentheses-equality -Wno-constant-conversion -Wno-incompatible-pointer-types -Wno-incompatible-function-pointer-types -I "$ROOT/runtime" -o "$OUT" "$CFILE"
-echo "haxe64: $OUT ($(wc -c < "$OUT" | tr -d ' ') bytes)"
+"$LLVM_MOS/bin/mos-c64-clang" "${CFLAGS[@]}" -o "$OUT" "$CFILE"
+END=$("$LLVM_MOS/bin/llvm-nm" "$OUT.elf" 2>/dev/null | awk '$3=="__bss_end"{print toupper($1)}' | sed 's/^0*//')
+echo "haxe64: $OUT ($(wc -c < "$OUT" | tr -d ' ') bytes, memory used up to \$${END:-?})"
+if [[ -n "$END" ]] && (( 16#$END > 16#C000 )); then
+  echo "haxe64: warning: program + variables end above \$C000 - this overlaps the screen of flixel64 / bank-3 setups" >&2
+fi
 [[ $RUN -eq 1 ]] && exec "$VICE" -autostart "$OUT"
 exit 0

@@ -15,7 +15,7 @@ class FlxObject extends FlxBasic {
 	public var lastX:Int = 0;
 	public var lastY:Int = 0;
 
-	// motion (use velocity.x / acceleration.y / drag.x / maxVelocity.y)
+	// motion in internal units (1/256 px per frame / per frame²): use velocity.x / acceleration.y / drag.x / maxVelocity.y (px/s)
 	public var vx:Int = 0;
 	public var vy:Int = 0;
 	public var ax:Int = 0;
@@ -26,14 +26,13 @@ class FlxObject extends FlxBasic {
 	public var maxVY:Int = 0;
 	public var rx:Int = 0;
 	public var ry:Int = 0;
-	public var rvx:Int = 0;
-	public var rvy:Int = 0;
 
 	public var moves:Bool = true;
 	public var immovable:Bool = false;
 	public var solid:Bool = true;
 	public var touching:FlxDirectionFlags = 0;
 	public var wasTouching:FlxDirectionFlags = 0;
+
 	/** Hardware-sprite / scrolling: 0 = fixed on screen (HUD), 1 = moves with the camera. **/
 	public var scrollFactor:Int = 1;
 
@@ -69,51 +68,63 @@ class FlxObject extends FlxBasic {
 		touching = FlxDirectionFlags.NONE;
 	}
 
-	function updateMotion():Void {
-		// x: acceleration or drag -> velocity
-		if (ax != 0) {
-			rvx += ax;
-			vx += untyped __c__("h64_take50(&{0})", rvx);
-		} else if (dragX != 0 && vx != 0) {
-			rvx += dragX;
-			var d:Int = untyped __c__("h64_take50(&{0})", rvx);
-			if (vx > 0) {
-				vx -= d;
-				if (vx < 0) vx = 0;
-			} else {
-				vx += d;
-				if (vx > 0) vx = 0;
+	/**
+		Motion in internal units: velocity in 1/256 pixel per frame, acceleration / drag in 1/256 pixel per frame²
+		(set through `velocity.x = 100` etc. in px/s - the conversion happens there, not every frame).
+		Position steps are `>> 8`: a byte move on the 6502.
+	**/
+	inline function updateMotion():Void {
+		// fields are read once into locals: every field access through `this` costs several instructions on the 6502
+		var v = vx;
+		var a = ax;
+		if (a != 0) v += a; else if (v != 0) {
+			var d = dragX;
+			if (d != 0) {
+				if (v > 0) {
+					v -= d;
+					if (v < 0) v = 0;
+				} else {
+					v += d;
+					if (v > 0) v = 0;
+				}
 			}
 		}
-		if (maxVX != 0) {
-			if (vx > maxVX) vx = maxVX else if (vx < -maxVX) vx = -maxVX;
+		var m = maxVX;
+		if (m == 0 && a != 0) m = 7680; // 30 px per frame (1500 px/s): keeps the 16-bit math safe
+		if (m != 0) {
+			if (v > m) v = m else if (v < -m) v = -m;
 		}
-		// y
-		if (ay != 0) {
-			rvy += ay;
-			vy += untyped __c__("h64_take50(&{0})", rvy);
-		} else if (dragY != 0 && vy != 0) {
-			rvy += dragY;
-			var d:Int = untyped __c__("h64_take50(&{0})", rvy);
-			if (vy > 0) {
-				vy -= d;
-				if (vy < 0) vy = 0;
-			} else {
-				vy += d;
-				if (vy > 0) vy = 0;
+		vx = v;
+		if (v != 0) {
+			var t = rx + v;
+			x += t >> 8;
+			rx = t & 255;
+		}
+		v = vy;
+		a = ay;
+		if (a != 0) v += a; else if (v != 0) {
+			var d = dragY;
+			if (d != 0) {
+				if (v > 0) {
+					v -= d;
+					if (v < 0) v = 0;
+				} else {
+					v += d;
+					if (v > 0) v = 0;
+				}
 			}
 		}
-		if (maxVY != 0) {
-			if (vy > maxVY) vy = maxVY else if (vy < -maxVY) vy = -maxVY;
+		m = maxVY;
+		if (m == 0 && a != 0) m = 7680;
+		if (m != 0) {
+			if (v > m) v = m else if (v < -m) v = -m;
 		}
-		// safety limit (16-bit integers): 1500 px/s is 30 px per frame
-		if (vx > 1500) vx = 1500 else if (vx < -1500) vx = -1500;
-		if (vy > 1500) vy = 1500 else if (vy < -1500) vy = -1500;
-		// velocity -> position
-		rx += vx;
-		x += untyped __c__("h64_take50(&{0})", rx);
-		ry += vy;
-		y += untyped __c__("h64_take50(&{0})", ry);
+		vy = v;
+		if (v != 0) {
+			var t = ry + v;
+			y += t >> 8;
+			ry = t & 255;
+		}
 	}
 
 	public inline function setPosition(nx:Int, ny:Int) {
@@ -121,6 +132,18 @@ class FlxObject extends FlxBasic {
 		y = ny;
 		lastX = nx;
 		lastY = ny;
+	}
+
+	/** Bring back to life at a new position, without motion (Flixel: reset). **/
+	public function reset(nx:Int, ny:Int):Void {
+		revive();
+		setPosition(nx, ny);
+		vx = 0;
+		vy = 0;
+		rx = 0;
+		ry = 0;
+		touching = FlxDirectionFlags.NONE;
+		wasTouching = FlxDirectionFlags.NONE;
 	}
 
 	public inline function setSize(w:Int, h:Int) {
@@ -155,17 +178,23 @@ abstract FlxVelocity(FlxObject) {
 	public var x(get, set):Int;
 	public var y(get, set):Int;
 
-	inline function get_x() return this.vx;
+	inline function get_x():Int return untyped __c__("h64_256_to_ps({0})", this.vx);
 
-	inline function set_x(v:Int) return this.vx = v;
+	inline function set_x(v:Int):Int {
+		this.vx = untyped __c__("h64_ps_to_256({0})", v);
+		return v;
+	}
 
-	inline function get_y() return this.vy;
+	inline function get_y():Int return untyped __c__("h64_256_to_ps({0})", this.vy);
 
-	inline function set_y(v:Int) return this.vy = v;
+	inline function set_y(v:Int):Int {
+		this.vy = untyped __c__("h64_ps_to_256({0})", v);
+		return v;
+	}
 
 	public inline function set(x:Int = 0, y:Int = 0) {
-		this.vx = x;
-		this.vy = y;
+		this.vx = untyped __c__("h64_ps_to_256({0})", x);
+		this.vy = untyped __c__("h64_ps_to_256({0})", y);
 	}
 }
 
@@ -173,17 +202,23 @@ abstract FlxAcceleration(FlxObject) {
 	public var x(get, set):Int;
 	public var y(get, set):Int;
 
-	inline function get_x() return this.ax;
+	inline function get_x():Int return untyped __c__("h64_256_to_pss({0})", this.ax);
 
-	inline function set_x(v:Int) return this.ax = v;
+	inline function set_x(v:Int):Int {
+		this.ax = untyped __c__("h64_pss_to_256({0})", v);
+		return v;
+	}
 
-	inline function get_y() return this.ay;
+	inline function get_y():Int return untyped __c__("h64_256_to_pss({0})", this.ay);
 
-	inline function set_y(v:Int) return this.ay = v;
+	inline function set_y(v:Int):Int {
+		this.ay = untyped __c__("h64_pss_to_256({0})", v);
+		return v;
+	}
 
 	public inline function set(x:Int = 0, y:Int = 0) {
-		this.ax = x;
-		this.ay = y;
+		this.ax = untyped __c__("h64_pss_to_256({0})", x);
+		this.ay = untyped __c__("h64_pss_to_256({0})", y);
 	}
 }
 
@@ -191,17 +226,23 @@ abstract FlxDrag(FlxObject) {
 	public var x(get, set):Int;
 	public var y(get, set):Int;
 
-	inline function get_x() return this.dragX;
+	inline function get_x():Int return untyped __c__("h64_256_to_pss({0})", this.dragX);
 
-	inline function set_x(v:Int) return this.dragX = v;
+	inline function set_x(v:Int):Int {
+		this.dragX = untyped __c__("h64_pss_to_256({0})", v);
+		return v;
+	}
 
-	inline function get_y() return this.dragY;
+	inline function get_y():Int return untyped __c__("h64_256_to_pss({0})", this.dragY);
 
-	inline function set_y(v:Int) return this.dragY = v;
+	inline function set_y(v:Int):Int {
+		this.dragY = untyped __c__("h64_pss_to_256({0})", v);
+		return v;
+	}
 
 	public inline function set(x:Int = 0, y:Int = 0) {
-		this.dragX = x;
-		this.dragY = y;
+		this.dragX = untyped __c__("h64_pss_to_256({0})", x);
+		this.dragY = untyped __c__("h64_pss_to_256({0})", y);
 	}
 }
 
@@ -209,16 +250,22 @@ abstract FlxMaxVelocity(FlxObject) {
 	public var x(get, set):Int;
 	public var y(get, set):Int;
 
-	inline function get_x() return this.maxVX;
+	inline function get_x():Int return untyped __c__("h64_256_to_ps({0})", this.maxVX);
 
-	inline function set_x(v:Int) return this.maxVX = v;
+	inline function set_x(v:Int):Int {
+		this.maxVX = untyped __c__("h64_ps_to_256({0})", v);
+		return v;
+	}
 
-	inline function get_y() return this.maxVY;
+	inline function get_y():Int return untyped __c__("h64_256_to_ps({0})", this.maxVY);
 
-	inline function set_y(v:Int) return this.maxVY = v;
+	inline function set_y(v:Int):Int {
+		this.maxVY = untyped __c__("h64_ps_to_256({0})", v);
+		return v;
+	}
 
 	public inline function set(x:Int = 0, y:Int = 0) {
-		this.maxVX = x;
-		this.maxVY = y;
+		this.maxVX = untyped __c__("h64_ps_to_256({0})", x);
+		this.maxVY = untyped __c__("h64_ps_to_256({0})", y);
 	}
 }

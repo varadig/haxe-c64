@@ -1,6 +1,7 @@
 package flixel.group;
 
 import flixel.FlxBasic;
+import haxe64.Types;
 
 /**
 	A list of objects updated and drawn together (Flixel: FlxTypedGroup<T>). At most 32 members.
@@ -9,7 +10,10 @@ import flixel.FlxBasic;
 @:generic
 @:pool(4)
 class FlxTypedGroup<T:FlxBasic> extends FlxGroupBase {
-	@:size(32) public var members:Array<T>;
+	/** The members (some entries may be null after remove). **/
+	public var members(get, never):Array<T>;
+
+	inline function get_members():Array<T> return cast _m;
 	public var maxSize:Int = 32;
 
 	public function new(maxSize:Int = 32) {
@@ -23,6 +27,7 @@ class FlxTypedGroup<T:FlxBasic> extends FlxGroupBase {
 
 	public function add(o:T):T {
 		for (i in 0...length) if (members[i] == o) return o;
+		if (o.flxKind == 2) nestedGroups++;
 		// reuse a removed slot
 		for (i in 0...length) if (members[i] == null) {
 			members[i] = o;
@@ -35,20 +40,29 @@ class FlxTypedGroup<T:FlxBasic> extends FlxGroupBase {
 	}
 
 	public function remove(o:T):T {
-		for (i in 0...length) if (members[i] == o) members[i] = null;
+		for (i in 0...length) if (members[i] == o) {
+			members[i] = null;
+			if (o.flxKind == 2) nestedGroups--;
+		}
 		return o;
 	}
 
 	override public function update():Void {
-		for (i in 0...length) {
-			var m = members[i];
+		var n:U8 = length;
+		var i:U8 = 0;
+		while (i < n) {
+			var m = _m[i];
+			i++;
 			if (m != null && m.exists && m.active) m.update();
 		}
 	}
 
 	override public function draw():Void {
-		for (i in 0...length) {
-			var m = members[i];
+		var n:U8 = length;
+		var i:U8 = 0;
+		while (i < n) {
+			var m = _m[i];
+			i++;
 			if (m != null && m.exists && m.visible) m.draw();
 		}
 	}

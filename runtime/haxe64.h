@@ -109,6 +109,32 @@ static const char *h64_cat(const char *a, const char *b) {
 	return r;
 }
 
+/* flixel64 motion units: 1/256 pixel per frame (50 Hz). Conversions use shifts only (no multiply/divide calls). */
+/* px/s -> 1/256 px per frame: v * 256 / 50 = v * 5.12 ~ v * 5.125 */
+static inline int16_t h64_ps_to_256(int16_t v) {
+	uint16_t a = v < 0 ? (uint16_t)(-v) : (uint16_t)v;
+	uint16_t r = (a << 2) + a + (a >> 3);
+	return v < 0 ? -(int16_t)r : (int16_t)r;
+}
+/* px/s^2 -> 1/256 px per frame^2: a * 256 / 2500 = a * 0.1024 ~ 1/8 - 1/64 - 1/128 + 1/1024 */
+static inline int16_t h64_pss_to_256(int16_t v) {
+	uint16_t a = v < 0 ? (uint16_t)(-v) : (uint16_t)v;
+	uint16_t r = (a >> 3) - (a >> 6) - (a >> 7) + (a >> 10);
+	return v < 0 ? -(int16_t)r : (int16_t)r;
+}
+/* 1/256 px per frame -> px/s: v * 50 / 256 = v * 25/128 = 1/8 + 1/16 + 1/128 */
+static inline int16_t h64_256_to_ps(int16_t v) {
+	uint16_t a = v < 0 ? (uint16_t)(-v) : (uint16_t)v;
+	uint16_t r = (a >> 3) + (a >> 4) + (a >> 7);
+	return v < 0 ? -(int16_t)r : (int16_t)r;
+}
+/* 1/256 px per frame^2 -> px/s^2: v * 2500 / 256 ~ v * 9.766 ~ v * 10 - v/4 (0.2%) */
+static inline int16_t h64_256_to_pss(int16_t v) {
+	uint16_t a = v < 0 ? (uint16_t)(-v) : (uint16_t)v;
+	uint16_t r = (a << 3) + (a << 1) - (a >> 2);
+	return v < 0 ? -(int16_t)r : (int16_t)r;
+}
+
 /* q = r / 50, r = r % 50 (r passed by pointer). Subtraction loop: no multiply / divide library call
    (for 50 Hz motion |r| is small, so this is 0-6 iterations). */
 static inline int16_t h64_take50(int16_t *r) {
@@ -149,6 +175,7 @@ static void h64_panic(const char *msg) {
 
 #ifdef __C64__
 #include <cbm.h>
+#endif
 
 /* ---------- screen helpers ---------- */
 static uint8_t h64_text_color = 1;
@@ -220,13 +247,26 @@ static void h64_copy_charrom(uint16_t dest, uint16_t offset, uint16_t len) {
 	__asm__ volatile("cli");
 }
 
+/* sum of 16 frames in units of 16 cycles -> percent of a PAL frame (19656 cycles) */
+static int16_t h64_pct(uint16_t sum) { return (int16_t)(((uint32_t)sum * 100UL) / 19656UL); }
+
 static void h64_wait_frame(void) {
+#ifdef __C64__
 	while (H64_PEEK(0xD012) == 251) {
 	}
 	while (H64_PEEK(0xD012) != 251) {
 	}
-}
 #endif
+}
+
+/* CPU cycles since start: real on the simulator ($FFF0), 0 on the C64 (use a CIA timer there) */
+static inline uint32_t h64_sim_cycles(void) {
+#ifdef __C64__
+	return 0;
+#else
+	return *(volatile uint32_t *)0xFFF0;
+#endif
+}
 
 static void h64_init(void) {
 #ifdef __C64__

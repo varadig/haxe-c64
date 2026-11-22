@@ -29,6 +29,10 @@ class FlxG {
 	public static var frame:U16 = 0;
 	/** Bumped whenever the whole screen is redrawn (texts then redraw themselves). **/
 	public static var screenEpoch:U16 = 0;
+	#if flixel64_profile
+	/** Full tilemap redraws so far (shown by the profile meter). **/
+	public static var redraws:Int = 0;
+	#end
 
 	public static var keys(get, never):FlxKeyboard;
 	public static var sound(get, never):FlxSoundFront;
@@ -146,28 +150,60 @@ class FlxG {
 
 	// ------------------------------------------------------------------ drawing (FlxGame calls these)
 
-	@:size(8) static var hw:Array<FlxSprite>;
+	// the VIC values of the sprites drawn this frame, computed once in addSprite (static arrays: fast absolute addressing)
+	@:size(8) static var hwPtr:Array<U8>;
+	@:size(8) static var hwX:Array<U8>;
+	@:size(8) static var hwY:Array<U8>;
+	@:size(8) static var hwCol:Array<U8>;
 	static var hwCount = 0;
+	static var hwMsb = 0;
+	static var hwMc = 0;
 	@:size(16) static var texts:Array<FlxText>;
 	static var textCount = 0;
+	// camera values cached once per frame for the sprite culling
+	static var camX = 0;
+	static var camY = 0;
+	static var camH = 200;
 
 	public static function beginDraw() {
 		hwCount = 0;
+		hwMsb = 0;
+		hwMc = 0;
 		textCount = 0;
+		camX = camera.scrollX;
+		camY = camera.scrollY;
+		camH = camera.viewRows * 8;
 	}
 
+	/** Called by FlxSprite.draw: takes one of the 8 hardware sprites if the sprite is on screen. **/
 	public static function addSprite(s:FlxSprite) {
-		// only sprites inside the view get one of the 8 hardware sprites
+		var n = hwCount;
+		if (n >= 8) return;
+		var sx = s.x - s.offX;
+		var sy = s.y - s.offY;
 		if (s.scrollFactor != 0) {
-			var sx = s.x - s.offX - camera.scrollX;
-			var sy = s.y - s.offY - camera.scrollY;
-			if (sx <= -24 || sx >= 320 || sy <= -21 || sy >= camera.viewRows * 8) return;
+			sx -= camX;
+			sy -= camY;
+			if (sx <= -24 || sx >= 320 || sy <= -21 || sy >= camH) return;
 		}
-		if (hwCount < 8) {
-			hw[hwCount] = s;
-			hwCount++;
-		}
+		sx += 24;
+		sy += 50;
+		if (sy <= 29 || sy >= 250) return;
+		if (sx < 0) sx = 0;
+		var f:Int = s.block + s.frame;
+		if (s.flipX) f += s.mirrorAt;
+		hwPtr[n] = f;
+		hwX[n] = sx;
+		hwY[n] = sy;
+		hwCol[n] = s.color;
+		var bit = BITS[n];
+		if (sx > 255) hwMsb |= bit;
+		if (s.multicolor) hwMc |= bit;
+		hwCount = n + 1;
 	}
+
+	static var BITS:Array<U8> = [1, 2, 4, 8, 16, 32, 64, 128];
+	static var ENABLE:Array<U8> = [0, 1, 3, 7, 15, 31, 63, 127, 255];
 
 	public static function addText(t:FlxText) {
 		if (textCount < 16) {
@@ -180,35 +216,21 @@ class FlxG {
 		for (i in 0...textCount) texts[i].render();
 	}
 
-	/** Writes the sprites drawn last frame into the VIC (called right after the vertical blank). **/
+	/** Writes the sprites drawn last frame into the VIC (called right after the vertical blank): only byte copies. **/
 	public static function commitSprites() {
-		var enable = 0, msb = 0, mc = 0;
-		var bit = 1;
-		for (i in 0...hwCount) {
-			var b = bit;
-			bit = bit << 1;
-			var s = hw[i];
-			var f:Int = s.frame;
-			if (s.flipX && s.mirrorAt > 0) f += s.mirrorAt;
-			Mem.poke(SPRITE_PTR + i, s.block + f);
-			var sx = s.x - s.offX + 24;
-			var sy = s.y - s.offY + 50;
-			if (s.scrollFactor != 0) {
-				sx -= camera.scrollX;
-				sy -= camera.scrollY;
+		// 8-bit index: indexed absolute addressing (a 16-bit Int index would do a 16-bit add per write)
+		untyped __c__("{
+			uint8_t n = (uint8_t){0}, i;
+			for (i = 0; i < n; i++) {
+				((volatile uint8_t*)0xC3F8)[i] = {1}[i];
+				((volatile uint8_t*)0xD027)[i] = {2}[i];
+				((volatile uint8_t*)0xD000)[i << 1] = {3}[i];
+				((volatile uint8_t*)0xD001)[i << 1] = {4}[i];
 			}
-			if (sx <= -24 || sx >= 344 || sy <= 29 || sy >= 250) continue;
-			if (sx < 0) sx = 0;
-			Mem.poke(0xD000 + i * 2, sx & 255);
-			Mem.poke(0xD001 + i * 2, sy);
-			Mem.poke(0xD027 + i, s.color);
-			enable |= b;
-			if (sx > 255) msb |= b;
-			if (s.multicolor) mc |= b;
-		}
-		Vic.spriteXMsb = msb;
-		Vic.spriteMulticolor = mc;
-		Vic.spriteEnable = enable;
+		}", hwCount, hwPtr, hwCol, hwX, hwY);
+		Vic.spriteXMsb = hwMsb;
+		Vic.spriteMulticolor = hwMc;
+		Vic.spriteEnable = ENABLE[hwCount];
 	}
 
 	// ------------------------------------------------------------------ collision
@@ -223,46 +245,103 @@ class FlxG {
 		return check(a, b, notify, true);
 	}
 
+	/** Groups are expanded here (recursive only for nested groups); object pairs go to non-recursive helpers (fast static frames). **/
 	@:noinline public static function check(a:FlxBasic, b:FlxBasic, notify:Dynamic->Dynamic->Void, sep:Bool):Bool {
 		if (a == null) a = state;
 		if (b == null) b = a;
 		if (!a.exists || !b.exists) return false;
-		var ka = a.flxKind, kb = b.flxKind;
-		if (ka == 2) {
+		var hit = false;
+		if (a.flxKind == 2) {
 			var g:FlxGroupBase = cast a;
-			var hit = false;
-			for (i in 0...g.length) {
-				var m = g.memberAt(i);
-				if (m != null && m.exists && check(m, b, notify, sep)) hit = true;
+			var n:U8 = g.length;
+			var i:U8 = 0;
+			while (i < n) {
+				var m = g._m[i];
+				i++;
+				if (m == null || !m.exists) continue;
+				if (m.flxKind == 2 || b.flxKind == 2) {
+					if (check(m, b, notify, sep)) hit = true;
+				} else if (pair(m, b, notify, sep)) hit = true;
 			}
 			return hit;
 		}
-		if (kb == 2) {
+		if (b.flxKind == 2) {
 			var g:FlxGroupBase = cast b;
-			var hit = false;
-			for (i in 0...g.length) {
-				var m = g.memberAt(i);
-				if (m != null && m.exists && check(a, m, notify, sep)) hit = true;
+			hit = objectVsGroup(a, g, notify, sep);
+			if (g.nestedGroups > 0) {
+				var n:U8 = g.length;
+				var i:U8 = 0;
+				while (i < n) {
+					var m = g._m[i];
+					i++;
+					if (m != null && m.exists && m.flxKind == 2 && check(a, m, notify, sep)) hit = true;
+				}
 			}
 			return hit;
 		}
+		return pair(a, b, notify, sep);
+	}
+
+	/** One object against the (non-group) members of a group; the box test is inline: most pairs do not touch. Not recursive. **/
+	@:noinline static function objectVsGroup(a:FlxBasic, g:FlxGroupBase, notify:Dynamic->Dynamic->Void, sep:Bool):Bool {
+		var hit = false;
+		var n:U8 = g.length;
+		var i:U8 = 0;
+		var isObj = a.flxKind == 1;
+		var x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+		if (isObj) {
+			var o:FlxObject = cast a;
+			x0 = o.x;
+			y0 = o.y;
+			x1 = x0 + o.width;
+			y1 = y0 + o.height;
+		}
+		while (i < n) {
+			var m = g._m[i];
+			i++;
+			if (m == null || !m.exists || m == a) continue;
+			var k = m.flxKind;
+			if (k == 2) continue;
+			if (isObj && k == 1) {
+				var p:FlxObject = cast m;
+				var px = p.x;
+				if (px >= x1 || x0 >= px + p.width) continue;
+				var py = p.y;
+				if (py >= y1 || y0 >= py + p.height) continue;
+			}
+			if (pair(a, m, notify, sep)) hit = true;
+		}
+		return hit;
+	}
+
+	/** Two non-group objects (or an object and a tilemap). **/
+	@:noinline static function pair(a:FlxBasic, b:FlxBasic, notify:Dynamic->Dynamic->Void, sep:Bool):Bool {
 		if (a == b) return false;
-		if (ka == 3) {
-			if (kb != 1) return false;
+		var ka = a.flxKind, kb = b.flxKind;
+		if (ka == 1 && kb == 1) {
+			var oa:FlxObject = cast a;
+			var ob:FlxObject = cast b;
+			// inline AABB test (the common case: no overlap)
+			if (oa.x >= ob.x + ob.width || ob.x >= oa.x + oa.width || oa.y >= ob.y + ob.height || ob.y >= oa.y + oa.height) return false;
+			if (sep && oa.solid && ob.solid) separate(oa, ob);
+			if (notify != null) notify(a, b);
+			return true;
+		}
+		if (kb == 3 && ka == 1) {
+			var t = a;
+			a = b;
+			b = t;
+			ka = 3;
+			kb = 1;
+		}
+		if (ka == 3 && kb == 1) {
 			var t:FlxTilemap = cast a;
 			var o:FlxObject = cast b;
 			var hit = sep ? t.collideObject(o) : t.overlapsObject(o);
 			if (hit && notify != null) notify(a, b);
 			return hit;
 		}
-		if (kb == 3) return check(b, a, notify, sep);
-		if (ka != 1 || kb != 1) return false;
-		var oa:FlxObject = cast a;
-		var ob:FlxObject = cast b;
-		if (!oa.overlaps(ob)) return false;
-		if (sep && oa.solid && ob.solid) separate(oa, ob);
-		if (notify != null) notify(a, b);
-		return true;
+		return false;
 	}
 
 	@:noinline static function separate(a:FlxObject, b:FlxObject) {

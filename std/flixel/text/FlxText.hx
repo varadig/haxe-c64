@@ -23,6 +23,7 @@ class FlxText extends FlxObject {
 	public function new(x:Int = 0, y:Int = 0, fieldWidth:Int = 0, ?text:String, size:Int = 8) {
 		super(x, y, fieldWidth > 0 ? fieldWidth : 8, 8);
 		moves = false;
+		active = false; // nothing to update: skipped by the group (draw still runs)
 		scrollFactor = 0;
 		if (text != null) set_text(text);
 	}

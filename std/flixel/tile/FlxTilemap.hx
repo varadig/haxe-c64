@@ -37,6 +37,7 @@ class FlxTilemap extends FlxObject {
 		super(0, 0, 0, 0);
 		flxKind = 3;
 		moves = false;
+		active = false; // nothing to update
 		immovable = true;
 	}
 
@@ -185,6 +186,9 @@ class FlxTilemap extends FlxObject {
 
 	/** Redraws the visible part of the map. **/
 	public function redraw() {
+		#if flixel64_profile
+		FlxG.redraws++;
+		#end
 		var cam = FlxG.camera;
 		drawnX = cam.scrollX;
 		drawnY = cam.scrollY;

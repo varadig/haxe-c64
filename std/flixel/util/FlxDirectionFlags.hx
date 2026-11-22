@@ -1,7 +1,7 @@
 package flixel.util;
 
 /** Which sides of an object touch something (Flixel: `touching.has(FLOOR)`). **/
-abstract FlxDirectionFlags(Int) from Int to Int {
+abstract FlxDirectionFlags(haxe64.Types.U8) from Int to Int {
 	public static inline final NONE = 0;
 	public static inline final LEFT = 1;
 	public static inline final RIGHT = 2;
