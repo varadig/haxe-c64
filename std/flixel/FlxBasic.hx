@@ -10,6 +10,8 @@ class FlxBasic {
 	public var visible:Bool = true;
 	public var exists:Bool = true;
 	public var alive:Bool = true;
+	/** 0 basic, 1 object, 2 group, 3 tilemap: a byte compare is much cheaper than Std.isOfType. **/
+	public var flxKind:Int = 0;
 
 	public function new() {}
 

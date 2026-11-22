@@ -43,6 +43,9 @@ class FlxG {
 	// ------------------------------------------------------------------ setup
 
 	public static function init() {
+		// the KERNAL's 60 Hz interrupt (keyboard buffer, clock) is not needed: FlxKeys reads the keyboard itself
+		Mem.poke(0xDC0D, 0x7F);
+		untyped __c__("(void)*(volatile uint8_t*)0xDC0D");
 		Vic.border = 0;
 		Vic.background = 0;
 		Vic.spriteEnable = 0;
@@ -180,7 +183,10 @@ class FlxG {
 	/** Writes the sprites drawn last frame into the VIC (called right after the vertical blank). **/
 	public static function commitSprites() {
 		var enable = 0, msb = 0, mc = 0;
+		var bit = 1;
 		for (i in 0...hwCount) {
+			var b = bit;
+			bit = bit << 1;
 			var s = hw[i];
 			var f:Int = s.frame;
 			if (s.flipX && s.mirrorAt > 0) f += s.mirrorAt;
@@ -196,10 +202,9 @@ class FlxG {
 			Mem.poke(0xD000 + i * 2, sx & 255);
 			Mem.poke(0xD001 + i * 2, sy);
 			Mem.poke(0xD027 + i, s.color);
-			var bit = 1 << i;
-			enable |= bit;
-			if (sx > 255) msb |= bit;
-			if (s.multicolor) mc |= bit;
+			enable |= b;
+			if (sx > 255) msb |= b;
+			if (s.multicolor) mc |= b;
 		}
 		Vic.spriteXMsb = msb;
 		Vic.spriteMulticolor = mc;
@@ -218,11 +223,12 @@ class FlxG {
 		return check(a, b, notify, true);
 	}
 
-	public static function check(a:FlxBasic, b:FlxBasic, notify:Dynamic->Dynamic->Void, sep:Bool):Bool {
+	@:noinline public static function check(a:FlxBasic, b:FlxBasic, notify:Dynamic->Dynamic->Void, sep:Bool):Bool {
 		if (a == null) a = state;
 		if (b == null) b = a;
 		if (!a.exists || !b.exists) return false;
-		if (Std.isOfType(a, FlxGroupBase)) {
+		var ka = a.flxKind, kb = b.flxKind;
+		if (ka == 2) {
 			var g:FlxGroupBase = cast a;
 			var hit = false;
 			for (i in 0...g.length) {
@@ -231,7 +237,7 @@ class FlxG {
 			}
 			return hit;
 		}
-		if (Std.isOfType(b, FlxGroupBase)) {
+		if (kb == 2) {
 			var g:FlxGroupBase = cast b;
 			var hit = false;
 			for (i in 0...g.length) {
@@ -241,16 +247,16 @@ class FlxG {
 			return hit;
 		}
 		if (a == b) return false;
-		if (Std.isOfType(a, FlxTilemap)) {
-			if (!Std.isOfType(b, FlxObject) || Std.isOfType(b, FlxTilemap)) return false;
+		if (ka == 3) {
+			if (kb != 1) return false;
 			var t:FlxTilemap = cast a;
 			var o:FlxObject = cast b;
 			var hit = sep ? t.collideObject(o) : t.overlapsObject(o);
 			if (hit && notify != null) notify(a, b);
 			return hit;
 		}
-		if (Std.isOfType(b, FlxTilemap)) return check(b, a, notify, sep);
-		if (!Std.isOfType(a, FlxObject) || !Std.isOfType(b, FlxObject)) return false;
+		if (kb == 3) return check(b, a, notify, sep);
+		if (ka != 1 || kb != 1) return false;
 		var oa:FlxObject = cast a;
 		var ob:FlxObject = cast b;
 		if (!oa.overlaps(ob)) return false;
@@ -259,7 +265,7 @@ class FlxG {
 		return true;
 	}
 
-	static function separate(a:FlxObject, b:FlxObject) {
+	@:noinline static function separate(a:FlxObject, b:FlxObject) {
 		if (a.immovable && b.immovable) return;
 		var ox = (a.x + a.width < b.x + b.width ? a.x + a.width : b.x + b.width) - (a.x > b.x ? a.x : b.x);
 		var oy = (a.y + a.height < b.y + b.height ? a.y + a.height : b.y + b.height) - (a.y > b.y ? a.y : b.y);

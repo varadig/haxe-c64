@@ -377,6 +377,8 @@ abstract FlxKeyList(Int) {
 class FlxKeys {
 	@:size(9) static var cur:Array<U8>;
 	@:size(9) static var prev:Array<U8>;
+	static var BIT:Array<U8> = [1, 2, 4, 8, 16, 32, 64, 128];
+	static var COLMASK:Array<U8> = [0xFE, 0xFD, 0xFB, 0xF7, 0xEF, 0xDF, 0xBF, 0x7F];
 
 	public static function scan() {
 		for (i in 0...9) prev[i] = cur[i];
@@ -384,7 +386,7 @@ class FlxKeys {
 		Mem.poke(0xDC00, 0xFF);
 		var joy:U8 = (~Mem.peek(0xDC00)) & 31;
 		for (col in 0...8) {
-			Mem.poke(0xDC00, (~(1 << col)) & 255);
+			Mem.poke(0xDC00, COLMASK[col]);
 			cur[col] = (~Mem.peek(0xDC01)) & 255;
 		}
 		Mem.poke(0xDC00, 0xFF);
@@ -419,7 +421,7 @@ class FlxKeys {
 	/** mode: 0 pressed, 1 just pressed, 2 just released. **/
 	public static function check(code:Int, mode:Int):Bool {
 		var i = code >> 3;
-		var bit = 1 << (code & 7);
+		var bit = BIT[code & 7];
 		var c = (cur[i] & bit) != 0;
 		var p = (prev[i] & bit) != 0;
 		return mode == 0 ? c : (mode == 1 ? c && !p : !c && p);

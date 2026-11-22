@@ -17,7 +17,10 @@ class FlxTilemap extends FlxObject {
 	public var widthInTiles:Int = 0;
 	public var heightInTiles:Int = 0;
 	public var tileSize:Int = 16;
-	var shift:Int = 4;
+	/** 16 x 16 tiles (else 8 x 8). All tile math uses constant shifts: variable shifts are slow on the 6502. **/
+	var big:Bool = true;
+	/** Offset of each map row in the data (no multiplication per lookup); maps up to 64 rows. **/
+	@:size(64) var rowOff:Array<U16>;
 	var map:Array<U8> = null;
 	var gfx:Array<U8> = null;
 	var charBase:Int = 64;
@@ -32,6 +35,7 @@ class FlxTilemap extends FlxObject {
 
 	public function new() {
 		super(0, 0, 0, 0);
+		flxKind = 3;
 		moves = false;
 		immovable = true;
 	}
@@ -49,7 +53,8 @@ class FlxTilemap extends FlxObject {
 		heightInTiles = mapData[2] | (mapData[3] << 8);
 		var count:Int = tileGraphic[0];
 		tileSize = tileGraphic[1];
-		shift = tileSize == 16 ? 4 : 3;
+		big = tileSize == 16;
+		for (r in 0...(heightInTiles < 64 ? heightInTiles : 64)) rowOff[r] = 4 + r * widthInTiles;
 		charsPer = tileSize == 16 ? 4 : 1;
 		mc = tileGraphic[2] != 0;
 		colorsAt = 5;
@@ -69,30 +74,61 @@ class FlxTilemap extends FlxObject {
 
 	public function getTile(tx:Int, ty:Int):Int {
 		if (tx < 0 || ty < 0 || tx >= widthInTiles || ty >= heightInTiles) return 0;
-		return map[4 + ty * widthInTiles + tx];
+		return map[rowOff[ty] + tx];
+	}
+
+	inline function toTile(p:Int):Int {
+		return big ? p >> 4 : p >> 3;
 	}
 
 	public function setTile(tx:Int, ty:Int, t:Int) {
 		if (tx < 0 || ty < 0 || tx >= widthInTiles || ty >= heightInTiles) return;
-		map[4 + ty * widthInTiles + tx] = t;
+		map[rowOff[ty] + tx] = t;
 		drawTileAt(tx, ty);
 	}
 
 	/** Tile index under a pixel position. **/
 	public inline function getTileAtPixel(px:Int, py:Int):Int {
-		return getTile(px >> shift, py >> shift);
+		return getTile(toTile(px), toTile(py));
 	}
 
 	public inline function solidAt(px:Int, py:Int):Bool {
-		return getTile(px >> shift, py >> shift) >= collideIndex;
+		return getTile(toTile(px), toTile(py)) >= collideIndex;
 	}
 
 	/** Any solid tile inside the rectangle? **/
 	public function overlapsSolid(px:Int, py:Int, w:Int, h:Int):Bool {
-		var x0 = px >> shift, x1 = (px + w - 1) >> shift;
-		var y0 = py >> shift, y1 = (py + h - 1) >> shift;
-		for (ty in y0...y1 + 1) for (tx in x0...x1 + 1) if (getTile(tx, ty) >= collideIndex) return true;
-		return false;
+		// two copies with constant shifts: a shift by a variable amount is a slow loop on the 6502
+		return big ? solid16(px, py, w, h) : solid8(px, py, w, h);
+	}
+
+	@:noinline function solid16(px:Int, py:Int, w:Int, h:Int):Bool return solidRect(px, py, w, h, 4);
+
+	@:noinline function solid8(px:Int, py:Int, w:Int, h:Int):Bool return solidRect(px, py, w, h, 3);
+
+	inline function solidRect(px:Int, py:Int, w:Int, h:Int, s:Int):Bool {
+		var x0 = px >> s, x1 = (px + w - 1) >> s;
+		var y0 = py >> s, y1 = (py + h - 1) >> s;
+		if (x0 < 0) x0 = 0;
+		if (y0 < 0) y0 = 0;
+		if (x1 >= widthInTiles) x1 = widthInTiles - 1;
+		if (y1 >= heightInTiles) y1 = heightInTiles - 1;
+		var ci = collideIndex;
+		var found = false;
+		var ty = y0;
+		while (ty <= y1 && !found) {
+			var row = rowOff[ty];
+			var tx = x0;
+			while (tx <= x1) {
+				if (map[row + tx] >= ci) {
+					found = true;
+					break;
+				}
+				tx++;
+			}
+			ty++;
+		}
+		return found;
 	}
 
 	public function overlapsObject(o:FlxObject):Bool {
@@ -100,33 +136,41 @@ class FlxTilemap extends FlxObject {
 	}
 
 	/** Pushes the object out of solid tiles (x first, then y) and sets its `touching` flags. **/
-	public function collideObject(o:FlxObject):Bool {
+	@:noinline public function collideObject(o:FlxObject):Bool {
+		return big ? collide16(o) : collide8(o);
+	}
+
+	@:noinline function collide16(o:FlxObject):Bool return collideWith(o, 4);
+
+	@:noinline function collide8(o:FlxObject):Bool return collideWith(o, 3);
+
+	inline function collideWith(o:FlxObject, s:Int):Bool {
 		var hit = false;
 		var w = o.width, h = o.height;
-		if (o.x != o.lastX && overlapsSolid(o.x, o.lastY, w, h)) {
+		if (o.x != o.lastX && (s == 4 ? solid16(o.x, o.lastY, w, h) : solid8(o.x, o.lastY, w, h))) {
 			if (o.x > o.lastX) {
-				o.x = (((o.x + w - 1) >> shift) << shift) - w;
+				o.x = (((o.x + w - 1) >> s) << s) - w;
 				o.touching = o.touching | FlxDirectionFlags.RIGHT;
 			} else {
-				o.x = ((o.x >> shift) + 1) << shift;
+				o.x = ((o.x >> s) + 1) << s;
 				o.touching = o.touching | FlxDirectionFlags.LEFT;
 			}
 			o.vx = 0;
 			o.rx = 0;
 			hit = true;
 		}
-		if (overlapsSolid(o.x, o.y, w, h)) {
+		if (s == 4 ? solid16(o.x, o.y, w, h) : solid8(o.x, o.y, w, h)) {
 			if (o.y >= o.lastY) {
-				o.y = (((o.y + h - 1) >> shift) << shift) - h;
+				o.y = (((o.y + h - 1) >> s) << s) - h;
 				o.touching = o.touching | FlxDirectionFlags.FLOOR;
 			} else {
-				o.y = ((o.y >> shift) + 1) << shift;
+				o.y = ((o.y >> s) + 1) << s;
 				o.touching = o.touching | FlxDirectionFlags.CEILING;
 			}
 			o.vy = 0;
 			o.ry = 0;
 			hit = true;
-		} else if (o.vy >= 0 && ((o.y + h) & ((1 << shift) - 1)) == 0 && overlapsSolid(o.x, o.y + h, w, 1)) {
+		} else if (o.vy >= 0 && ((o.y + h) & ((1 << s) - 1)) == 0 && (s == 4 ? solid16(o.x, o.y + h, w, 1) : solid8(o.x, o.y + h, w, 1))) {
 			// standing exactly on a tile: still on the floor (gravity moves only every few frames)
 			o.touching = o.touching | FlxDirectionFlags.FLOOR;
 			hit = true;
@@ -149,11 +193,11 @@ class FlxTilemap extends FlxObject {
 		for (r in 0...rows) {
 			var off = r * 40;
 			var wy = cy0 + r;
-			var ty = wy >> (shift - 3);
+			var ty = big ? wy >> 1 : wy;
 			var sub = charsPer == 4 ? (wy & 1) * 2 : 0;
 			for (c in 0...40) {
 				var wx = cx0 + c;
-				var t = getTile(wx >> (shift - 3), ty);
+				var t = getTile(big ? wx >> 1 : wx, ty);
 				if (t < drawIndex) {
 					Mem.poke(FlxG.SCREEN + off + c, 32);
 				} else {

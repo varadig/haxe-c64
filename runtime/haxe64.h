@@ -5,7 +5,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#ifndef __C64__
 #include <stdio.h>
+#endif
 
 #define H64_POKE(a, v) (*(volatile uint8_t *)(uint16_t)(a) = (uint8_t)(v))
 #define H64_PEEK(a) (*(volatile uint8_t *)(uint16_t)(a))
@@ -107,17 +109,40 @@ static const char *h64_cat(const char *a, const char *b) {
 	return r;
 }
 
-/* ---------- trace / panic ---------- */
-static void h64_trace_int(int16_t v) { printf("%d\n", v); }
-static void h64_trace_str(const char *s) { printf("%s\n", s); }
-static void h64_trace_fix(int16_t f) {
-	uint16_t u = f < 0 ? (uint16_t)(-f) : (uint16_t)f;
-	printf("%s%u.%02u\n", f < 0 ? "-" : "", u >> 4, ((u & 15) * 100 + 8) / 16);
+/* q = r / 50, r = r % 50 (r passed by pointer). Subtraction loop: no multiply / divide library call
+   (for 50 Hz motion |r| is small, so this is 0-6 iterations). */
+static inline int16_t h64_take50(int16_t *r) {
+	/* volatile: otherwise the compiler turns the loop back into a (slow) division */
+	volatile int16_t v = *r;
+	int16_t q = 0;
+	while (v >= 50) { v -= 50; q++; }
+	while (v <= -50) { v += 50; q--; }
+	*r = v;
+	return q;
 }
-static void h64_trace_bool(bool b) { printf(b ? "true\n" : "false\n"); }
+
+/* ---------- trace / panic ---------- */
+#ifdef __C64__
+/* no printf on the C64 (it costs several KB): write through the KERNAL character output */
+#include <cbm.h>
+static void h64_puts(const char *s) {
+	while (*s) {
+		char c = *s++;
+		if (c >= 'a' && c <= 'z') c -= 32;
+		cbm_k_chrout(c == '\n' ? 13 : c);
+	}
+}
+#else
+static void h64_puts(const char *s) { fputs(s, stdout); }
+#endif
+static void h64_trace_str(const char *s) { h64_puts(s); h64_puts("\n"); }
+static void h64_trace_int(int16_t v) { h64_trace_str(h64_itoa(v)); }
+static void h64_trace_fix(int16_t f) { h64_trace_str(h64_ftoa(f)); }
+static void h64_trace_bool(bool b) { h64_trace_str(b ? "true" : "false"); }
 
 static void h64_panic(const char *msg) {
-	printf("\nPANIC: %s\n", msg);
+	h64_puts("\nPANIC: ");
+	h64_puts(msg);
 	for (;;) {
 	}
 }

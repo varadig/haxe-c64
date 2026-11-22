@@ -52,6 +52,7 @@ class FlxObject extends FlxBasic {
 
 	public function new(x:Int = 0, y:Int = 0, width:Int = 8, height:Int = 8) {
 		super();
+		flxKind = 1;
 		this.x = x;
 		this.y = y;
 		this.width = width;
@@ -72,13 +73,10 @@ class FlxObject extends FlxBasic {
 		// x: acceleration or drag -> velocity
 		if (ax != 0) {
 			rvx += ax;
-			var d = Std.int(rvx / 50);
-			vx += d;
-			rvx -= d * 50;
+			vx += untyped __c__("h64_take50(&{0})", rvx);
 		} else if (dragX != 0 && vx != 0) {
 			rvx += dragX;
-			var d = Std.int(rvx / 50);
-			rvx -= d * 50;
+			var d:Int = untyped __c__("h64_take50(&{0})", rvx);
 			if (vx > 0) {
 				vx -= d;
 				if (vx < 0) vx = 0;
@@ -93,13 +91,10 @@ class FlxObject extends FlxBasic {
 		// y
 		if (ay != 0) {
 			rvy += ay;
-			var d = Std.int(rvy / 50);
-			vy += d;
-			rvy -= d * 50;
+			vy += untyped __c__("h64_take50(&{0})", rvy);
 		} else if (dragY != 0 && vy != 0) {
 			rvy += dragY;
-			var d = Std.int(rvy / 50);
-			rvy -= d * 50;
+			var d:Int = untyped __c__("h64_take50(&{0})", rvy);
 			if (vy > 0) {
 				vy -= d;
 				if (vy < 0) vy = 0;
@@ -116,13 +111,9 @@ class FlxObject extends FlxBasic {
 		if (vy > 1500) vy = 1500 else if (vy < -1500) vy = -1500;
 		// velocity -> position
 		rx += vx;
-		var dx = Std.int(rx / 50);
-		x += dx;
-		rx -= dx * 50;
+		x += untyped __c__("h64_take50(&{0})", rx);
 		ry += vy;
-		var dy = Std.int(ry / 50);
-		y += dy;
-		ry -= dy * 50;
+		y += untyped __c__("h64_take50(&{0})", ry);
 	}
 
 	public inline function setPosition(nx:Int, ny:Int) {

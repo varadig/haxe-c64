@@ -81,10 +81,11 @@ class FlxCamera extends FlxBasic {
 		var cx = target.x + (target.width >> 1);
 		var cy = target.y + (target.height >> 1);
 		var h = viewRows * 8;
-		var nx = cx < 0 ? 0 : Std.int(cx / 320) * 320;
-		var ny = cy < 0 ? 0 : Std.int(cy / h) * h;
-		scrollX = nx;
-		scrollY = ny;
+		// step screen by screen (no division; usually 0 iterations)
+		while (cx >= scrollX + 320) scrollX += 320;
+		while (cx < scrollX && scrollX > 0) scrollX -= 320;
+		while (cy >= scrollY + h) scrollY += h;
+		while (cy < scrollY && scrollY > 0) scrollY -= h;
 	}
 
 	public function updateEffects() {
